@@ -214,8 +214,7 @@ void initializeDistributedVector(
     GlobalOrdinal nx, GlobalOrdinal ny)
 {
     using VectorType = Tpetra::Vector<Scalar, LocalOrdinal, GlobalOrdinal, Node>;
-
-\    b = Teuchos::rcp(new VectorType(rowMap, true)); // true = initialize to zero
+    b = Teuchos::rcp(new VectorType(rowMap, true)); // true = initialize to zero
 
     const LocalOrdinal numLocalEntries = rowMap->getLocalNumElements();
 

@@ -144,7 +144,7 @@ RCP<TpetraMultiVector> solve(RCP<TpetraCrsMatrix> A, RCP<TpetraVector> b, int nx
         rcp(new TpetraVector(b->getMap(), true));
 
     RCP<Teuchos::ParameterList> mueluParams = rcp(new Teuchos::ParameterList());
-    mueluParams->set("verbosity", "medium");
+    mueluParams->set("verbosity", "high");
     mueluParams->set("coarse: max size", 256);
     mueluParams->set("smoother: type", "CHEBYSHEV");
     mueluParams->set("smoother: pre or post", "both");
