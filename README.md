@@ -11,7 +11,42 @@ This project implements a parallel 2D Poisson solver using Trilinos libraries su
 * Output to per-rank files
 * Command-line options for configuration
 
+
+🧮 Supported Systems
+
+## 🧮 Supported Systems
+
+The solver can handle the following types of linear systems:
+
+### 1. Standard Poisson Equation
+
+$$
+-\Delta \phi = f
+$$
+
+Discretized using a standard 5-point stencil on a uniform 2D grid with homogeneous Dirichlet boundary conditions. Constructed via:
+
+```cpp
+createPoissonMatrix(...);
+```
+
+### 2. Generalized Poisson Equation
+
+$$
+-\nabla \cdot (n \nabla \phi) = f
+$$
+
+Where $n(x, y)$ is a spatially varying coefficient (e.g., density). Discretized using a conservative finite difference scheme. Constructed via:
+
+```cpp
+createGeneralizedPoissonMatrix(...);
+```
+
+To solve this form, pass the `--generalized` flag during runtime.
+
 ---
+
+
 
 ## 📦 Dependencies
 
