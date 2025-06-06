@@ -16,7 +16,7 @@ find_package(Trilinos REQUIRED COMPONENTS Teuchos Tpetra MueLu)
 add_executable(HelloWorld src/hello_world.cpp)
 
 # Add src/matrix.hpp to the Poisson executable's source files
-add_executable(Poisson src/main.cpp src/matrix.cpp)
+add_executable(Poisson src/main.cpp src/matrix.cpp src/initialization.cpp)
 
 
 target_include_directories(HelloWorld PRIVATE

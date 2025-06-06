@@ -16,6 +16,7 @@
 #include <BelosPseudoBlockCGSolMgr.hpp>
 #include <BelosPseudoBlockGmresSolMgr.hpp>
 
+
 #include <MueLu.hpp>
 #include <MueLu_Level.hpp>
 #include <MueLu_BaseClass.hpp>
@@ -30,6 +31,9 @@
 #include <Tpetra_MultiVector.hpp>
 
 #include <MueLu_CreateTpetraPreconditioner.hpp>
+
+
+
 using Scalar = Tpetra::Vector<>::scalar_type;
 using GlobalOrdinal = Tpetra::Vector<>::global_ordinal_type;
 using TpetraMapBase = Tpetra::Map<>;
@@ -47,6 +51,7 @@ using TpetraImporter = Tpetra::Import<LocalOrdinal, GlobalOrdinal, Node>;
 using BelosLinearProblem = Belos::LinearProblem<Scalar, TpetraMultiVector, TpetraOperator>;
 using BelosSolverManager = Belos::SolverManager<Scalar, TpetraMultiVector, TpetraOperator>;
 using BelosCGSolver = Belos::PseudoBlockCGSolMgr<Scalar, TpetraMultiVector, TpetraOperator>;
+using BelosGMRESSolver = Belos::PseudoBlockGmresSolMgr<Scalar, TpetraMultiVector, TpetraOperator>;
 
 using TeuchosComm = Teuchos::Comm<int>;
 using TeuchosParameterList = Teuchos::ParameterList;
