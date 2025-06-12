@@ -9,14 +9,12 @@
     {
       "name": "common",
       "hidden": true,
+      "binaryDir": "${sourceDir}/build",
       "cacheVariables": {
         "CMAKE_BUILD_TYPE": "Release",
         "CMAKE_C_COMPILER": "gcc",
         "CMAKE_CXX_COMPILER": "g++",
-        "CMAKE_CXX_EXTENSIONS": "Off",
-        "binaryDir": "${sourceDir}/build",
-        "Trilinos_DIR": "/leonardo/home/userexternal/rmario00/Trilinos-trilinos-release-16-1-0/install/lib64/cmake/Trilinos"
-
+        "CMAKE_CXX_EXTENSIONS": "Off"
       }
     },
     {
@@ -24,13 +22,19 @@
       "displayName": "GCC GPU Settings",
       "inherits": "common",
       "cacheVariables": {
-        "CMAKE_CXX_COMPILER": "/leonardo/home/userexternal/rmario00/Trilinos-trilinos-release-16-1-0/install/bin/nvcc_wrapper"
+        "CMAKE_CXX_COMPILER": "/leonardo/home/userexternal/rmario00/Trilinos-trilinos-release-16-1-0/install/bin/nvcc_wrapper",
+        "Trilinos_DIR": "/leonardo/home/userexternal/rmario00/Trilinos-trilinos-release-16-1-0/install/lib/cmake/Trilinos",
+        "USE_CUDA": "ON"
       }
     },
     {
       "name": "CPU",
       "displayName": "GCC CPU Settings",
-      "inherits": "common"
+      "inherits": "common",
+      "cacheVariables": {
+        "USE_CUDA": "OFF",
+        "Trilinos_DIR": "/home/mraeth@ipp.mpg.de/phd/codes/trilinos16/Trilinos-trilinos-release-16-1-0/install/lib/cmake/Trilinos"
+      }
     }
   ]
 }
