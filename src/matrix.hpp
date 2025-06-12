@@ -40,6 +40,9 @@ using TpetraMapBase = Tpetra::Map<>;
 using Node = Tpetra::Map<>::node_type;
 using LocalOrdinal = Tpetra::Map<>::local_ordinal_type;
 
+using ExecutionSpace = Node::execution_space;
+
+
 using TpetraMap = Tpetra::Map<LocalOrdinal, GlobalOrdinal, Node>;
 using TpetraCrsGraph = Tpetra::CrsGraph<LocalOrdinal, GlobalOrdinal, Node>;
 using TpetraCrsMatrix = Tpetra::CrsMatrix<Scalar, LocalOrdinal, GlobalOrdinal, Node>;

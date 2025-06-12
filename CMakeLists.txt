@@ -5,10 +5,12 @@ project(HelloWorld LANGUAGES C CXX)
 set(CMAKE_CXX_STANDARD 11)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
-set(Trilinos_DIR "/home/mraeth@ipp.mpg.de/phd/codes/trilinos16/Trilinos-trilinos-release-16-1-0/install/lib/cmake/Trilinos")
+# set(Trilinos_DIR "/leonardo/home/userexternal/rmario0Trilinos-trilinos-release-16-1-0/install/lib/cmake/Trilinos")
 
 # MPI
 find_package(MPI REQUIRED)
+
+find_package(CUDA REQUIRED)
 
 # Trilinos
 find_package(Trilinos REQUIRED COMPONENTS Teuchos Tpetra MueLu)
@@ -16,7 +18,7 @@ find_package(Trilinos REQUIRED COMPONENTS Teuchos Tpetra MueLu)
 add_executable(HelloWorld src/hello_world.cpp)
 
 # Add src/matrix.hpp to the Poisson executable's source files
-add_executable(Poisson src/main.cpp src/matrix.cpp src/initialization.cpp)
+add_executable(Poisson src/main.cpp src/matrix.cpp)
 
 
 target_include_directories(HelloWorld PRIVATE
@@ -27,7 +29,7 @@ target_include_directories(HelloWorld PRIVATE
 target_link_libraries(HelloWorld PRIVATE
   MPI::MPI_CXX
   ${Trilinos_LIBRARIES}
-  ${Trilinos_TPL_LIBRARIES}
+  ${Trilinos_TPL_LIBRARIES} CUDA::cusolver CUDA::cusparse
 )
 
 
@@ -44,4 +46,5 @@ target_link_libraries(Poisson PRIVATE
   MPI::MPI_CXX
   ${Trilinos_LIBRARIES}
   ${Trilinos_TPL_LIBRARIES}
+  CUDA::cusolver CUDA::cusparse
 )

@@ -1,0 +1,36 @@
+{
+  "version": 3,
+  "cmakeMinimumRequired": {
+    "major": 3,
+    "minor": 23,
+    "patch": 0
+  },
+  "configurePresets": [
+    {
+      "name": "common",
+      "hidden": true,
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Release",
+        "CMAKE_C_COMPILER": "gcc",
+        "CMAKE_CXX_COMPILER": "g++",
+        "CMAKE_CXX_EXTENSIONS": "Off",
+        "binaryDir": "${sourceDir}/build",
+        "Trilinos_DIR": "/leonardo/home/userexternal/rmario00/Trilinos-trilinos-release-16-1-0/install/lib64/cmake/Trilinos"
+
+      }
+    },
+    {
+      "name": "GPU",
+      "displayName": "GCC GPU Settings",
+      "inherits": "common",
+      "cacheVariables": {
+        "CMAKE_CXX_COMPILER": "/leonardo/home/userexternal/rmario00/Trilinos-trilinos-release-16-1-0/install/bin/nvcc_wrapper"
+      }
+    },
+    {
+      "name": "CPU",
+      "displayName": "GCC CPU Settings",
+      "inherits": "common"
+    }
+  ]
+}

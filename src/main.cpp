@@ -3,32 +3,41 @@
 #include <matrix.hpp>
 
 
+#include <Kokkos_Core.hpp>
+
+
 
 template <typename Scalar, typename LocalOrdinal, typename GlobalOrdinal, typename Node, typename CalculateFunc>
 void initializeDistributed(
-    const RCP<const Tpetra::Map<LocalOrdinal, GlobalOrdinal, Node>> &rowMap,
-    RCP<Tpetra::Vector<Scalar, LocalOrdinal, GlobalOrdinal, Node>> &b,
+    const Teuchos::RCP<const Tpetra::Map<LocalOrdinal, GlobalOrdinal, Node>> &rowMap,
+    Teuchos::RCP<Tpetra::Vector<Scalar, LocalOrdinal, GlobalOrdinal, Node>> &b,
     GlobalOrdinal nx, GlobalOrdinal ny,
     CalculateFunc calculate_func) {
 
-    b = rcp(new TpetraVector(rowMap, true)); // true = initialize to zero
 
+     std::cout << "Running on execution space in initializataoin: " << typeid(ExecutionSpace).name() << std::endl;
+
+    b = Teuchos::rcp(new Tpetra::Vector<Scalar, LocalOrdinal, GlobalOrdinal, Node>(rowMap, true));
     const LocalOrdinal numLocalEntries = rowMap->getLocalNumElements();
+    auto b_view = b->getLocalViewDevice(Tpetra::Access::OverwriteAll);
 
-    for (LocalOrdinal local_k = 0; local_k < numLocalEntries; ++local_k) {
-        GlobalOrdinal global_k = rowMap->getGlobalElement(local_k);
-        
-        GlobalOrdinal i = global_k / ny;
-        GlobalOrdinal j = global_k % ny;
+    // Copy GIDs to device
+    auto gids_host = rowMap->getMyGlobalIndices();
+    Kokkos::View<GlobalOrdinal*> gids_dev("gids_dev", gids_host.size());
+    Kokkos::deep_copy(gids_dev, Kokkos::View<const GlobalOrdinal*, Kokkos::HostSpace>(gids_host.data(), gids_host.size()));
 
-        Scalar value = calculate_func( // Call the passed-in function object/lambda/function pointer
-            static_cast<double>(i) / static_cast<double>(nx-1),
-            static_cast<double>(j) / static_cast<double>(ny-1));
+    Kokkos::parallel_for("InitializeVector", Kokkos::RangePolicy<ExecutionSpace>(0, numLocalEntries),
+        KOKKOS_LAMBDA(const LocalOrdinal local_k) {
+            const GlobalOrdinal global_k = gids_dev(local_k);
+            const GlobalOrdinal i = global_k / ny;
+            const GlobalOrdinal j = global_k % ny;
 
-        b->replaceLocalValue(local_k, value);
-    }
+            const double x = static_cast<double>(i) / static_cast<double>(nx - 1);
+            const double y = static_cast<double>(j) / static_cast<double>(ny - 1);
+
+            b_view(local_k, 0) = calculate_func(x, y);
+        });
 }
-
 
 template <typename Scalar, typename LocalOrdinal, typename GlobalOrdinal, typename Node>
 void print2File(const std::string &label,
@@ -49,6 +58,7 @@ void print2File(const std::string &label,
         std::cerr << "Rank " << myRank << ": Failed to open file " << filename.str() << std::endl;
         return;
     }
+    
 
     outFile << std::fixed << std::setprecision(12);
 
@@ -112,7 +122,7 @@ RCP<TpetraVector> solve(RCP<TpetraCrsMatrix> A, RCP<TpetraVector> b, std::string
     problem->setProblem();
 
     RCP<Teuchos::ParameterList> belosParams = rcp(new Teuchos::ParameterList());
-    belosParams->set("Convergence Tolerance", 1e-15);
+    belosParams->set("Convergence Tolerance", 1e-12);
     belosParams->set("Maximum Iterations", 500);
     belosParams->set("Verbosity", Belos::Errors | Belos::Warnings | Belos::StatusTestDetails);
     belosParams->set("Output Frequency", 1); 
@@ -142,10 +152,14 @@ int main(int argc, char *argv[]) {
     Kokkos::initialize(argc, argv);
 
     {
+        std::cout << "Kokkos execution space: " << typeid(Kokkos::DefaultExecutionSpace).name() << std::endl;
+
         bool generalized = false;
         GlobalOrdinal nx = 10, ny = 10;
         std::string solverType = "GMRES";
         bool test_analytical = false;
+
+
 
         Teuchos::CommandLineProcessor clp(false);
         clp.setOption("nx", &nx, "Number of grid points in x-direction");
@@ -170,21 +184,21 @@ int main(int argc, char *argv[]) {
         RCP<TpetraVector> phi;
         RCP<TpetraVector> n;
 
-        initializeDistributed(map, phi, nx, ny, calculate_phi);
-        
+        initializeDistributed(map, phi, nx, ny, PhiFunctor{});
+
         RCP<TpetraCrsMatrix> A;
 
         if (generalized) {
             if (!test_analytical){
-                initializeDistributed(map, n, nx, ny, calculate_n);
+                initializeDistributed(map, n, nx, ny, NFunctor{});
             }else{
-                initializeDistributed(map, n, nx, ny, calculate_n_analytical);
+                initializeDistributed(map, n, nx, ny, NAnalyticalFunctor{});
             }
             print2File("n", *n, *comm, nx, ny);
-            initializeDistributed(map, b, nx, ny, calculate_rho);
+            initializeDistributed(map, b, nx, ny, RhoFunctor{});
             A = createGeneralizedPoissonMatrix(b->getMap(), b, n, nx, ny);
         } else {
-            initializeDistributed(map, b, nx, ny, calculate_rho_const);
+            initializeDistributed(map, b, nx, ny, RhoConstFunctor{});
             A = createPoissonMatrix(b->getMap(), b, nx, ny);
         }
 
