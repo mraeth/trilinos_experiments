@@ -88,26 +88,34 @@ RCP<TpetraVector> solve(RCP<TpetraCrsMatrix> A, RCP<TpetraVector> b, std::string
   
     RCP<TpetraVector> x =
         rcp(new TpetraVector(b->getMap(), true));
+RCP<Teuchos::ParameterList> mueluParams = rcp(new Teuchos::ParameterList());
+mueluParams->set("verbosity", "low"); // Lower for production runs
+mueluParams->set("coarse: max size", 32);
+mueluParams->set("cycle type", "V"); // Consider F-cycle for speed
 
-    RCP<Teuchos::ParameterList> mueluParams = rcp(new Teuchos::ParameterList());
-    mueluParams->set("verbosity", "high");
-    mueluParams->set("coarse: max size", 32);
-    mueluParams->set("cycle type", "W"); 
+int maxLevels = 10;
+mueluParams->set("max levels", maxLevels);
 
+// Coarse grid solver
+mueluParams->set("coarse: type", "Amesos2"); // Use a direct solver for the coarsest level
 
-    int maxLevels = 10;
-    mueluParams->set("max levels", maxLevels);
+for (int level = 0; level < maxLevels - 1; ++level) {
+    Teuchos::ParameterList& levelParams = mueluParams->sublist("level " + std::to_string(level));
+    levelParams.set("smoother: type", "RELAXATION");
+    Teuchos::ParameterList smootherParams;
 
-    for (int level = 0; level < maxLevels - 1; ++level) {
-        Teuchos::ParameterList& levelParams = mueluParams->sublist("level " + std::to_string(level));
-        levelParams.set("smoother: type", "RELAXATION");
-        Teuchos::ParameterList smootherParams;
-        smootherParams.set("relaxation: type", "Symmetric Gauss-Seidel");
-        smootherParams.set("relaxation: damping factor", 1.0);
-        smootherParams.set("relaxation: sweeps", level + 2); 
-        levelParams.set("smoother: params", smootherParams);
-    }
+    // Option 1: Damped Jacobi - often very good for GPUs
+    smootherParams.set("relaxation: type", "Jacobi"); // Damped Jacobi
+    smootherParams.set("relaxation: damping factor", 0.8);
+    smootherParams.set("relaxation: sweeps", 2); // Few sweeps on fine levels
 
+    // Option 2: Symmetric Gauss-Seidel - if coloring is efficient
+    // smootherParams.set("relaxation: type", "Symmetric Gauss-Seidel");
+    // smootherParams.set("relaxation: damping factor", 1.0); // No damping needed for SGS
+    // smootherParams.set("relaxation: sweeps", (level < 3) ? 2 : (level + 2)); // More sweeps deeper
+
+    levelParams.set("smoother: params", smootherParams);
+}
 
     RCP<TpetraOperator> mueluPrec =
         MueLu::CreateTpetraPreconditioner<Scalar, LocalOrdinal, GlobalOrdinal, Node>(A, *mueluParams);
