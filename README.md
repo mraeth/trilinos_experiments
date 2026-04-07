@@ -12,8 +12,6 @@ This project implements a parallel 2D Poisson solver using Trilinos libraries su
 * Command-line options for configuration
 
 
-🧮 Supported Systems
-
 ## 🧮 Supported Systems
 
 The solver can handle the following types of linear systems:
@@ -58,18 +56,11 @@ To solve this form, pass the `--generalized` flag during runtime.
 
 ## ⚙️ Building the Code
 
-Update `Trilinos_DIR` in `CMakeLists.txt` to your install path:
-
-```cmake
-set(Trilinos_DIR "/path/to/trilinos/install/lib/cmake/Trilinos")
-```
-
-Then build:
+Set `Trilinos_DIR` in `CMakePresets.json` to your install path, then configure and build using a preset:
 
 ```bash
-mkdir build && cd build
-cmake ..
-make
+cmake --preset CPU    # or GPU for CUDA builds
+cmake --build build
 ```
 
 ---
@@ -77,7 +68,7 @@ make
 ## 🚀 Running the Solver
 
 ```bash
-mpirun -n 4 ./Poisson --nx=100 --ny=100 --solver=GMRES
+mpirun -n 4 ./build/Poisson --nx=100 --ny=100 --solver=GMRES
 ```
 
 ### Available Options
@@ -109,14 +100,18 @@ Each file contains tuples in the format `(i, j, value)`.
 
 ```
 .
-├── src/
+├── src/                    # C++ source files
 │   ├── main.cpp
-│   ├── matrix.cpp
-│   ├── matrix.hpp
-│   ├── initialization.cpp
-│   └── initialization.hpp
+│   ├── matrix.cpp / .hpp
+│   ├── initialization.cpp / .hpp
+│   └── hello_world.cpp     # standalone Trilinos hello-world example
+├── plot/                   # Jupyter notebooks for analysis and visualization
+│   ├── analyse.ipynb
+│   └── test_initial_cond.ipynb
+├── build/                  # compiled binaries (gitignored)
+├── data/                   # solver output files, *.out (gitignored)
+├── results/                # timing and benchmark text files (gitignored)
 ├── CMakeLists.txt
+├── CMakePresets.json
 └── README.md
 ```
-
-
