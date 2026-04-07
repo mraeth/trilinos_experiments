@@ -1,4 +1,4 @@
-cmake_minimum_required(VERSION 3.17.1)
+cmake_minimum_required(VERSION 3.27)
 
 project(PoissonSolver LANGUAGES C CXX)
 
@@ -14,7 +14,7 @@ else()
 endif()
 
 # C++ Standard
-set(CMAKE_CXX_STANDARD 11)
+set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
 # MPI

@@ -41,7 +41,6 @@
       "displayName": "GCC CPU — Trilinos 17 / Kokkos 5.0.2 / C++20",
       "inherits": "common",
       "cacheVariables": {
-        "CMAKE_CXX_STANDARD": "20",
         "USE_CUDA": "OFF",
         "Kokkos_ROOT": "${sourceDir}/trilinos_install/kokkos-install",
         "Trilinos_DIR": "${sourceDir}/trilinos_install/trilinos-install/lib/cmake/Trilinos"

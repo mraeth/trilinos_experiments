@@ -2,12 +2,14 @@
 #include <iostream>
 #include <matrix.hpp>
 
-
 #include <Kokkos_Core.hpp>
 
+template<typename F>
+concept GridFunctor = requires(F f, double x, double y) {
+    { f(x, y) } -> std::convertible_to<double>;
+};
 
-
-template <typename Scalar, typename LocalOrdinal, typename GlobalOrdinal, typename Node, typename CalculateFunc>
+template <typename Scalar, typename LocalOrdinal, typename GlobalOrdinal, typename Node, GridFunctor CalculateFunc>
 void initializeDistributed(
     const Teuchos::RCP<const Tpetra::Map<LocalOrdinal, GlobalOrdinal, Node>> &rowMap,
     Teuchos::RCP<Tpetra::Vector<Scalar, LocalOrdinal, GlobalOrdinal, Node>> &b,
@@ -21,10 +23,7 @@ void initializeDistributed(
     const LocalOrdinal numLocalEntries = rowMap->getLocalNumElements();
     auto b_view = b->getLocalViewDevice(Tpetra::Access::OverwriteAll);
 
-    // Copy GIDs to device
-    auto gids_host = rowMap->getMyGlobalIndices();
-    Kokkos::View<GlobalOrdinal*> gids_dev("gids_dev", gids_host.size());
-    Kokkos::deep_copy(gids_dev, Kokkos::View<const GlobalOrdinal*, Kokkos::HostSpace>(gids_host.data(), gids_host.size()));
+    auto gids_dev = rowMap->getMyGlobalIndicesDevice();
 
     Kokkos::parallel_for("InitializeVector", Kokkos::RangePolicy<ExecutionSpace>(0, numLocalEntries),
         KOKKOS_LAMBDA(const LocalOrdinal local_k) {
@@ -70,8 +69,8 @@ void print2File(const std::string &label,
     for (LocalOrdinal local_k = 0; local_k < numLocal; ++local_k) {
         GlobalOrdinal global_k = map->getGlobalElement(local_k);
 
-        GlobalOrdinal i = global_k / ny;
-        GlobalOrdinal j = global_k % ny;
+        GlobalOrdinal i = global_k % nx;
+        GlobalOrdinal j = global_k / nx;
 
         Scalar value = data1d(local_k);
         outFile << "(" << i << ", " << j << ", " << value << ")\n";
@@ -134,15 +133,9 @@ for (int level = 0; level < maxLevels - 1; ++level) {
     belosParams->set("Maximum Iterations", 500);
     belosParams->set("Verbosity", Belos::Errors | Belos::Warnings | Belos::StatusTestDetails);
     belosParams->set("Output Frequency", 1); 
-    RCP<BelosSolverManager> solver{};
-
-    if (solverType == "CG"){
-        solver = rcp(new BelosCGSolver(problem, belosParams));
-    }else if (solverType == "GMRES") {
-        solver = rcp(new BelosGMRESSolver(problem, belosParams));
-    } else {
-        throw std::runtime_error("Unsupported solver type: " + solverType);
-    }
+    Belos::SolverFactory<Scalar, TpetraMultiVector, TpetraOperator> factory;
+    RCP<BelosSolverManager> solver = factory.create(solverType, belosParams);
+    solver->setProblem(problem);
 
     RCP<Teuchos::Time> solveTimer = Teuchos::TimeMonitor::getNewTimer("Solve Timer");
     Belos::ReturnType ret;
@@ -159,8 +152,7 @@ for (int level = 0; level < maxLevels - 1; ++level) {
 
 
 int main(int argc, char *argv[]) {
-    Teuchos::GlobalMPISession mpiSession(&argc, &argv, nullptr);
-    Kokkos::initialize(argc, argv);
+    Tpetra::ScopeGuard tpetraScope(&argc, &argv);
 
     {
         std::cout << "Kokkos execution space: " << typeid(Kokkos::DefaultExecutionSpace).name() << std::endl;
@@ -178,7 +170,6 @@ int main(int argc, char *argv[]) {
         clp.setOption("generalized", "nongeneralized", &generalized, "Use generalized matrix (true/false)");
         
         if (clp.parse(argc, argv) != Teuchos::CommandLineProcessor::PARSE_SUCCESSFUL) {
-            Kokkos::finalize();
             return EXIT_FAILURE;
         }
         
@@ -228,6 +219,5 @@ int main(int argc, char *argv[]) {
         print2File("phi", *phi, *comm, nx, ny);
     }
 
-    Kokkos::finalize();
     return 0;
 }
