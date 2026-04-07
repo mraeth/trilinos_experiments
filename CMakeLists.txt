@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.17.1)
 
-project(HelloWorld LANGUAGES C CXX)
+project(PoissonSolver LANGUAGES C CXX)
 
 # Optional CUDA activation via preset
 option(USE_CUDA "Enable CUDA support" OFF)
@@ -22,27 +22,6 @@ find_package(MPI REQUIRED)
 
 # Trilinos
 find_package(Trilinos REQUIRED COMPONENTS Teuchos Tpetra MueLu)
-
-# === HelloWorld Target ===
-add_executable(HelloWorld src/hello_world.cpp)
-
-target_include_directories(HelloWorld PRIVATE
-  ${Trilinos_INCLUDE_DIRS}
-  ${Trilinos_TPL_INCLUDE_DIRS}
-)
-
-target_link_libraries(HelloWorld PRIVATE
-  MPI::MPI_CXX
-  ${Trilinos_LIBRARIES}
-  ${Trilinos_TPL_LIBRARIES}
-)
-
-if(USE_CUDA)
-  target_link_libraries(HelloWorld PRIVATE
-    CUDAToolkit::cusolver
-    CUDAToolkit::cusparse
-  )
-endif()
 
 # === Poisson Target ===
 add_executable(Poisson

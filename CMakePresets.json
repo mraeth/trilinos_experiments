@@ -2,7 +2,7 @@
   "version": 3,
   "cmakeMinimumRequired": {
     "major": 3,
-    "minor": 23,
+    "minor": 27,
     "patch": 0
   },
   "configurePresets": [
@@ -29,11 +29,22 @@
     },
     {
       "name": "CPU",
-      "displayName": "GCC CPU Settings",
+      "displayName": "GCC CPU — Trilinos 16",
       "inherits": "common",
       "cacheVariables": {
         "USE_CUDA": "OFF",
         "Trilinos_DIR": "/home/mraeth@ipp.mpg.de/phd/codes/trilinos16/Trilinos-trilinos-release-16-1-0/install/lib/cmake/Trilinos"
+      }
+    },
+    {
+      "name": "CPU-T17",
+      "displayName": "GCC CPU — Trilinos 17 / Kokkos 5.0.2 / C++20",
+      "inherits": "common",
+      "cacheVariables": {
+        "CMAKE_CXX_STANDARD": "20",
+        "USE_CUDA": "OFF",
+        "Kokkos_ROOT": "${sourceDir}/trilinos_install/kokkos-install",
+        "Trilinos_DIR": "${sourceDir}/trilinos_install/trilinos-install/lib/cmake/Trilinos"
       }
     }
   ]

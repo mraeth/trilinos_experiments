@@ -33,6 +33,9 @@
 *.txt
 
 build/
+trilinos_install/build/
+trilinos_install/kokkos-install/
+trilinos_install/trilinos-install/
 out/
 data/
 results/

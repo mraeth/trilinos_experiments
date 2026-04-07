@@ -15,7 +15,7 @@ void initializeDistributed(
     CalculateFunc calculate_func) {
 
 
-     std::cout << "Running on execution space in initializataoin: " << typeid(ExecutionSpace).name() << std::endl;
+     std::cout << "Running on execution space in initialization: " << typeid(ExecutionSpace).name() << std::endl;
 
     b = Teuchos::rcp(new Tpetra::Vector<Scalar, LocalOrdinal, GlobalOrdinal, Node>(rowMap, true));
     const LocalOrdinal numLocalEntries = rowMap->getLocalNumElements();
@@ -29,8 +29,8 @@ void initializeDistributed(
     Kokkos::parallel_for("InitializeVector", Kokkos::RangePolicy<ExecutionSpace>(0, numLocalEntries),
         KOKKOS_LAMBDA(const LocalOrdinal local_k) {
             const GlobalOrdinal global_k = gids_dev(local_k);
-            const GlobalOrdinal i = global_k / ny;
-            const GlobalOrdinal j = global_k % ny;
+            const GlobalOrdinal i = global_k % nx;
+            const GlobalOrdinal j = global_k / nx;
 
             const double x = static_cast<double>(i) / static_cast<double>(nx - 1);
             const double y = static_cast<double>(j) / static_cast<double>(ny - 1);
@@ -145,11 +145,14 @@ for (int level = 0; level < maxLevels - 1; ++level) {
     }
 
     RCP<Teuchos::Time> solveTimer = Teuchos::TimeMonitor::getNewTimer("Solve Timer");
+    Belos::ReturnType ret;
     {
-    Teuchos::TimeMonitor timer(*solveTimer);
-        Belos::ReturnType ret = solver->solve();
+        Teuchos::TimeMonitor timer(*solveTimer);
+        ret = solver->solve();
     }
     Teuchos::TimeMonitor::summarize(std::cout);
+    if (ret != Belos::Converged && A->getDomainMap()->getComm()->getRank() == 0)
+        std::cerr << "Warning: solver did not converge." << std::endl;
     return x;
 }
 
@@ -166,8 +169,6 @@ int main(int argc, char *argv[]) {
         GlobalOrdinal nx = 10, ny = 10;
         std::string solverType = "GMRES";
         bool test_analytical = false;
-
-
 
         Teuchos::CommandLineProcessor clp(false);
         clp.setOption("nx", &nx, "Number of grid points in x-direction");
@@ -187,7 +188,6 @@ int main(int argc, char *argv[]) {
         const GlobalOrdinal indexBase = 0;
 
         RCP<const TpetraMapBase> map = rcp(new TpetraMapBase(numGlobalEntries, indexBase, comm));
-        RCP<const Tpetra::Map<LocalOrdinal, GlobalOrdinal>> rowMap = Tpetra::createUniformContigMap<LocalOrdinal, GlobalOrdinal>(numGlobalEntries, comm); 
         RCP<TpetraVector> b;
         RCP<TpetraVector> phi;
         RCP<TpetraVector> n;
@@ -204,10 +204,10 @@ int main(int argc, char *argv[]) {
             }
             print2File("n", *n, *comm, nx, ny);
             initializeDistributed(map, b, nx, ny, RhoFunctor{});
-            A = createGeneralizedPoissonMatrix(b->getMap(), b, n, nx, ny);
+            A = createGeneralizedPoissonMatrix(b->getMap(), n, nx, ny);
         } else {
             initializeDistributed(map, b, nx, ny, RhoConstFunctor{});
-            A = createPoissonMatrix(b->getMap(), b, nx, ny);
+            A = createPoissonMatrix(b->getMap(), nx, ny);
         }
 
         if (!test_analytical) {
@@ -225,7 +225,7 @@ int main(int argc, char *argv[]) {
             std::cout << "Solve time: " << elapsed.count() << " seconds" << std::endl;
         }
 
-        print2File("phi", *(phi->getVectorNonConst(0)), *comm, nx, ny);
+        print2File("phi", *phi, *comm, nx, ny);
     }
 
     Kokkos::finalize();
