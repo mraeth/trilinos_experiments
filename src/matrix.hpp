@@ -1,51 +1,53 @@
 #pragma once
 
-#include <fstream>
-
-#include <Teuchos_RCP.hpp>
-#include <Teuchos_DefaultComm.hpp>
-#include <Teuchos_ParameterList.hpp>
-#include <Teuchos_TimeMonitor.hpp>
-#include <Tpetra_Core.hpp>
-#include <Tpetra_Map.hpp>
-#include <Tpetra_CrsGraph.hpp>
-#include <Tpetra_CrsMatrix.hpp>
-#include <Tpetra_MultiVector.hpp>
-
-#include <BelosSolverFactory.hpp>
-#include <BelosTpetraAdapter.hpp>
-
-#include <MueLu.hpp>
-#include <MueLu_CreateTpetraPreconditioner.hpp>
-
 #include <Kokkos_Core.hpp>
+#include <memory>
+#include <string>
 
-using Scalar        = Tpetra::Vector<>::scalar_type;
-using GlobalOrdinal = Tpetra::Vector<>::global_ordinal_type;
-using LocalOrdinal  = Tpetra::Map<>::local_ordinal_type;
-using Node          = Tpetra::Map<>::node_type;
-using TpetraMapBase = Tpetra::Map<>;
-using ExecutionSpace = Node::execution_space;
+using ExecutionSpace = Kokkos::DefaultExecutionSpace;
+using ScalarView   = Kokkos::View<double*,  ExecutionSpace>;
+// 2D view: view(i,j) with LayoutLeft maps to flat index i + j*nx
+using ScalarView2D = Kokkos::View<double**, Kokkos::LayoutLeft, ExecutionSpace>;
 
-using TpetraMap         = Tpetra::Map<LocalOrdinal, GlobalOrdinal, Node>;
-using TpetraCrsGraph    = Tpetra::CrsGraph<LocalOrdinal, GlobalOrdinal, Node>;
-using TpetraCrsMatrix   = Tpetra::CrsMatrix<Scalar, LocalOrdinal, GlobalOrdinal, Node>;
-using TpetraVector      = Tpetra::Vector<Scalar, LocalOrdinal, GlobalOrdinal, Node>;
-using TpetraMultiVector = Tpetra::MultiVector<Scalar, LocalOrdinal, GlobalOrdinal, Node>;
-using TpetraOperator    = Tpetra::Operator<Scalar, LocalOrdinal, GlobalOrdinal, Node>;
-using TpetraImporter    = Tpetra::Import<LocalOrdinal, GlobalOrdinal, Node>;
+// Opaque handle to an assembled matrix + preconditioner.
+// Build via PoissonSolver::buildMatrix() / buildGeneralizedMatrix().
+// Pass to PoissonSolver::solve() — can be reused across multiple solves.
+class PoissonMatrix {
+public:
+    PoissonMatrix();
+    ~PoissonMatrix();
+    PoissonMatrix(PoissonMatrix&&) noexcept;
+    PoissonMatrix& operator=(PoissonMatrix&&) noexcept;
+private:
+    friend class PoissonSolver;
+    struct Impl;
+    std::unique_ptr<Impl> impl_;
+};
 
-using BelosLinearProblem = Belos::LinearProblem<Scalar, TpetraMultiVector, TpetraOperator>;
-using BelosSolverManager = Belos::SolverManager<Scalar, TpetraMultiVector, TpetraOperator>;
+class PoissonSolver {
+public:
+    // Must be called before constructing any PoissonSolver, and its lifetime
+    // must exceed all PoissonSolver instances.
+    struct ScopeGuard {
+        ScopeGuard(int& argc, char**& argv);
+        ~ScopeGuard();
+    };
 
-using Teuchos::RCP;
-using Teuchos::rcp;
+    PoissonSolver(int nx, int ny);
+    ~PoissonSolver();
 
-RCP<TpetraCrsMatrix> createPoissonMatrix(
-    Teuchos::RCP<const Tpetra::Map<LocalOrdinal, GlobalOrdinal>> rowMap,
-    int nx, int ny);
+    // Standard Poisson: -Δφ = rhs
+    PoissonMatrix buildMatrix();
 
-RCP<TpetraCrsMatrix> createGeneralizedPoissonMatrix(
-    Teuchos::RCP<const Tpetra::Map<LocalOrdinal, GlobalOrdinal>> rowMap,
-    RCP<TpetraVector> n,
-    int nx, int ny);
+    // Generalized Poisson: -∇·(n ∇φ) = rhs
+    PoissonMatrix buildGeneralizedMatrix(const ScalarView2D& n);
+
+    void apply(const PoissonMatrix& mat, const ScalarView2D& x, ScalarView2D& y);
+
+    void solve(const PoissonMatrix& mat, const ScalarView2D& rhs, ScalarView2D& x,
+               std::string solverType = "GMRES");
+
+private:
+    struct Impl;
+    std::unique_ptr<Impl> impl_;
+};

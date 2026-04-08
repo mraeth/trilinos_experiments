@@ -1,178 +1,192 @@
 #include "matrix.hpp"
+#include "tpetra_types.hpp"
 
-/// @brief Assemble the standard 2D Poisson matrix.
-///
-/// @details Discretizes the equation
-/// @f[ -\Delta\phi = f \quad \text{on } [0,1]^2 @f]
-/// using the standard 5-point finite difference stencil on a uniform
-/// @f$ n_x \times n_y @f$ grid with mesh spacings
-/// @f$ h_x = \frac{1}{n_x - 1} @f$ and @f$ h_y = \frac{1}{n_y - 1} @f$.
-///
-/// Grid points are numbered with a row-major (x-fast) global ordering:
-/// @f$ k = j \cdot n_x + i @f$, where @f$ i \in [0, n_x) @f$ is the
-/// x-index and @f$ j \in [0, n_y) @f$ is the y-index.
-///
-/// For interior nodes the assembled row is:
-/// @f[
-///   \frac{1}{h_x h_y}\bigl(4\phi_{i,j}
-///     - \phi_{i+1,j} - \phi_{i-1,j}
-///     - \phi_{i,j+1} - \phi_{i,j-1}\bigr) = f_{i,j}
-/// @f]
-///
-/// Boundary rows contain a single 1.0 on the diagonal (identity) so that
-/// homogeneous Dirichlet conditions are enforced by setting the corresponding
-/// RHS entries to zero.
-///
-/// @param rowMap  Non-overlapping Tpetra row map describing the parallel distribution.
-/// @param nx      Number of grid points in the x-direction.
-/// @param ny      Number of grid points in the y-direction.
-/// @return        Filled and optimized Tpetra CRS matrix.
-RCP<TpetraCrsMatrix> createPoissonMatrix(Teuchos::RCP<const Tpetra::Map<LocalOrdinal, GlobalOrdinal>> rowMap, int nx, int ny) {
+struct PoissonMatrix::Impl {
+    RCP<TpetraCrsMatrix> A;
+    RCP<TpetraOperator>  prec;
+};
 
-    const GlobalOrdinal globalRowMin = rowMap->getMinGlobalIndex();
-    const GlobalOrdinal globalRowMax = rowMap->getMaxGlobalIndex();
+struct PoissonSolver::Impl {
+    RCP<const TpetraMapBase> map;
+    int nx, ny;
+};
 
-    const size_t maxNumEntriesPerRow = 5;
+static RCP<const TpetraMapBase> makeSerialMap(int nx, int ny)
+{
+    const Tpetra::global_size_t n = static_cast<Tpetra::global_size_t>(nx) * ny;
+    return rcp(new TpetraMapBase(n, 0, Teuchos::DefaultComm<int>::getComm()));
+}
 
-    auto A = Teuchos::rcp(new TpetraCrsMatrix(rowMap, maxNumEntriesPerRow));
+static RCP<TpetraOperator> buildPreconditioner(RCP<TpetraCrsMatrix> A)
+{
+    RCP<Teuchos::ParameterList> p = rcp(new Teuchos::ParameterList());
+    p->set("verbosity", "low");
+    p->set("coarse: max size", 32);
+    p->set("cycle type", "V");
+    p->set("max levels", 10);
+    p->set("coarse: type", "Amesos2");
 
-    const double hx = 1.0 / static_cast<double>(nx - 1);
-    const double hy = 1.0 / static_cast<double>(ny - 1);
-    const double h_sq_inv = 1.0 / (hx * hy);
-
-    for (GlobalOrdinal globalRow = globalRowMin; globalRow <= globalRowMax; ++globalRow) {
-        const GlobalOrdinal i = globalRow % nx;
-        const GlobalOrdinal j = globalRow / nx;
-
-        Teuchos::Array<GlobalOrdinal> colIndices;
-        Teuchos::Array<Scalar> values;
-
-        bool isBoundary = (i == 0 || i == nx - 1 || j == 0 || j == ny - 1);
-
-        if (isBoundary) {
-            colIndices.push_back(globalRow);
-            values.push_back(1.0);
-            A->insertGlobalValues(globalRow, colIndices(), values());
-        } else {
-            colIndices.push_back(globalRow);
-            values.push_back(4.0 * h_sq_inv);
-
-            colIndices.push_back(globalRow - 1);
-            values.push_back(-1.0 * h_sq_inv);
-            colIndices.push_back(globalRow + 1);
-            values.push_back(-1.0 * h_sq_inv);
-            colIndices.push_back(globalRow - nx);
-            values.push_back(-1.0 * h_sq_inv);
-            colIndices.push_back(globalRow + nx);
-            values.push_back(-1.0 * h_sq_inv);
-
-            A->insertGlobalValues(globalRow, colIndices(), values());
-        }
+    for (int level = 0; level < 9; ++level) {
+        Teuchos::ParameterList& lp = p->sublist("level " + std::to_string(level));
+        lp.set("smoother: type", "RELAXATION");
+        Teuchos::ParameterList sp;
+        sp.set("relaxation: type", "Jacobi");
+        sp.set("relaxation: damping factor", 0.8);
+        sp.set("relaxation: sweeps", 2);
+        lp.set("smoother: params", sp);
     }
 
-    Teuchos::RCP<Teuchos::ParameterList> params = Teuchos::rcp(new Teuchos::ParameterList());
-    params->set("Optimize Storage", true);
-    A->fillComplete(rowMap, rowMap, params);
+    return MueLu::CreateTpetraPreconditioner<Scalar, LocalOrdinal, GlobalOrdinal, Node>(A, *p);
+}
 
+static RCP<TpetraVector> wrapView(const RCP<const TpetraMapBase>& map, const ScalarView2D& v)
+{
+    using dev_view_2d = TpetraMultiVector::dual_view_type::t_dev;
+    TpetraMultiVector mv(map, dev_view_2d(const_cast<double*>(v.data()), v.size(), 1));
+    return rcp(new TpetraVector(mv, 0));
+}
+
+static void runBelos(RCP<TpetraCrsMatrix> A, RCP<TpetraOperator> prec,
+                     RCP<TpetraVector> b, RCP<TpetraVector> x,
+                     const std::string& solverType)
+{
+    RCP<BelosLinearProblem> problem = rcp(new BelosLinearProblem());
+    problem->setOperator(A);
+    problem->setLHS(x);
+    problem->setRHS(b);
+    problem->setLeftPrec(prec);
+    problem->setProblem();
+
+    RCP<Teuchos::ParameterList> p = rcp(new Teuchos::ParameterList());
+    p->set("Convergence Tolerance", 1e-12);
+    p->set("Maximum Iterations", 500);
+    p->set("Verbosity", Belos::Errors | Belos::Warnings | Belos::StatusTestDetails);
+    p->set("Output Frequency", 1);
+
+    Belos::SolverFactory<Scalar, TpetraMultiVector, TpetraOperator> factory;
+    RCP<BelosSolverManager> solver = factory.create(solverType, p);
+    solver->setProblem(problem);
+
+    if (solver->solve() != Belos::Converged)
+        std::cerr << "Warning: PoissonSolver did not converge." << std::endl;
+}
+
+PoissonSolver::ScopeGuard::ScopeGuard(int& argc, char**& argv) { Tpetra::initialize(&argc, &argv); }
+PoissonSolver::ScopeGuard::~ScopeGuard()                       { Tpetra::finalize(); }
+
+PoissonMatrix::PoissonMatrix() : impl_(std::make_unique<Impl>()) {}
+PoissonMatrix::~PoissonMatrix() = default;
+PoissonMatrix::PoissonMatrix(PoissonMatrix&&) noexcept = default;
+PoissonMatrix& PoissonMatrix::operator=(PoissonMatrix&&) noexcept = default;
+
+PoissonSolver::PoissonSolver(int nx, int ny)
+    : impl_(std::make_unique<Impl>())
+{
+    impl_->nx  = nx;
+    impl_->ny  = ny;
+    impl_->map = makeSerialMap(nx, ny);
+}
+
+PoissonSolver::~PoissonSolver() = default;
+
+PoissonMatrix PoissonSolver::buildMatrix()
+{
+    PoissonMatrix m;
+    m.impl_->A    = createPoissonMatrix(impl_->map, impl_->nx, impl_->ny);
+    m.impl_->prec = buildPreconditioner(m.impl_->A);
+    return m;
+}
+
+PoissonMatrix PoissonSolver::buildGeneralizedMatrix(const ScalarView2D& n)
+{
+    PoissonMatrix m;
+    m.impl_->A    = createGeneralizedPoissonMatrix(impl_->map, wrapView(impl_->map, n), impl_->nx, impl_->ny);
+    m.impl_->prec = buildPreconditioner(m.impl_->A);
+    return m;
+}
+
+void PoissonSolver::apply(const PoissonMatrix& mat, const ScalarView2D& x, ScalarView2D& y)
+{
+    mat.impl_->A->apply(*wrapView(impl_->map, x), *wrapView(impl_->map, y));
+}
+
+void PoissonSolver::solve(const PoissonMatrix& mat, const ScalarView2D& rhs, ScalarView2D& x,
+                          std::string solverType)
+{
+    runBelos(mat.impl_->A, mat.impl_->prec,
+             wrapView(impl_->map, rhs), wrapView(impl_->map, x), solverType);
+}
+
+RCP<TpetraCrsMatrix> createPoissonMatrix(
+    Teuchos::RCP<const Tpetra::Map<LocalOrdinal, GlobalOrdinal>> rowMap, int nx, int ny)
+{
+    auto A = Teuchos::rcp(new TpetraCrsMatrix(rowMap, 5));
+
+    const double h_sq_inv = static_cast<double>(nx - 1) * static_cast<double>(ny - 1);
+
+    for (GlobalOrdinal k = rowMap->getMinGlobalIndex(); k <= rowMap->getMaxGlobalIndex(); ++k) {
+        const GlobalOrdinal i = k % nx;
+        const GlobalOrdinal j = k / nx;
+
+        Teuchos::Array<GlobalOrdinal> cols;
+        Teuchos::Array<Scalar> vals;
+
+        if (i == 0 || i == nx - 1 || j == 0 || j == ny - 1) {
+            cols.push_back(k); vals.push_back(1.0);
+        } else {
+            cols.push_back(k);      vals.push_back( 4.0 * h_sq_inv);
+            cols.push_back(k - 1);  vals.push_back(-1.0 * h_sq_inv);
+            cols.push_back(k + 1);  vals.push_back(-1.0 * h_sq_inv);
+            cols.push_back(k - nx); vals.push_back(-1.0 * h_sq_inv);
+            cols.push_back(k + nx); vals.push_back(-1.0 * h_sq_inv);
+        }
+        A->insertGlobalValues(k, cols(), vals());
+    }
+
+    Teuchos::RCP<Teuchos::ParameterList> p = Teuchos::rcp(new Teuchos::ParameterList());
+    p->set("Optimize Storage", true);
+    A->fillComplete(rowMap, rowMap, p);
     return A;
 }
 
-
-/// @brief Assemble the generalized 2D Poisson matrix with a spatially varying coefficient.
-///
-/// @details Discretizes the equation
-/// @f[ -\nabla \cdot \bigl(n(x,y)\,\nabla\phi\bigr) = f \quad \text{on } [0,1]^2 @f]
-/// using a conservative finite difference scheme on a uniform
-/// @f$ n_x \times n_y @f$ grid. The coefficient @f$ n @f$ is averaged
-/// arithmetically to the four cell faces surrounding each interior node
-/// @f$ (i, j) @f$:
-/// @f[
-///   n_{i\pm\tfrac{1}{2},j} = \frac{n_{i,j} + n_{i\pm 1,j}}{2}, \qquad
-///   n_{i,j\pm\tfrac{1}{2}} = \frac{n_{i,j} + n_{i,j\pm 1}}{2}.
-/// @f]
-///
-/// The assembled row for an interior node reads:
-/// @f[
-///   \frac{1}{h_x h_y}\Bigl[
-///     \bigl(n_E + n_W + n_N + n_S\bigr)\phi_{i,j}
-///     - n_E\,\phi_{i+1,j} - n_W\,\phi_{i-1,j}
-///     - n_N\,\phi_{i,j+1} - n_S\,\phi_{i,j-1}
-///   \Bigr] = f_{i,j},
-/// @f]
-/// where @f$ n_E = n_{i+\tfrac{1}{2},j} @f$, etc., and
-/// @f$ h_x h_y @f$ is the cell area.
-/// Boundary rows are set to the identity to enforce homogeneous Dirichlet
-/// conditions (RHS must be zero at those nodes).
-///
-/// Grid points use the same row-major ordering as createPoissonMatrix:
-/// @f$ k = j \cdot n_x + i @f$.
-///
-/// @note In a parallel MPI run the face-averaged coefficients at process
-///       boundaries require @f$ n @f$-values owned by neighbouring ranks.
-///       These are fetched via a @c Tpetra::Import into a ghost-extended
-///       vector before assembly, so the function is safe for any number
-///       of MPI processes.
-///
-/// @param rowMap  Non-overlapping Tpetra row map describing the parallel distribution.
-/// @param n       Distributed vector holding the coefficient @f$ n(x,y) @f$
-///                at every grid node, defined on @p rowMap.
-/// @param nx      Number of grid points in the x-direction.
-/// @param ny      Number of grid points in the y-direction.
-/// @return        Filled and optimized Tpetra CRS matrix.
 RCP<TpetraCrsMatrix> createGeneralizedPoissonMatrix(
     Teuchos::RCP<const Tpetra::Map<LocalOrdinal, GlobalOrdinal>> rowMap,
-    RCP<TpetraVector> n,
-    int nx,
-    int ny)
+    RCP<TpetraVector> n, int nx, int ny)
 {
-    const GlobalOrdinal globalRowMin = rowMap->getMinGlobalIndex();
-    const GlobalOrdinal globalRowMax = rowMap->getMaxGlobalIndex();
+    auto n_view   = n->getLocalViewHost(Tpetra::Access::ReadOnly);
+    auto A        = Teuchos::rcp(new TpetraCrsMatrix(rowMap, 5));
+    const double h_sq_inv = static_cast<double>(nx - 1) * static_cast<double>(ny - 1);
 
-    auto n_view = n->getLocalViewHost(Tpetra::Access::ReadOnly);
+    for (GlobalOrdinal k = rowMap->getMinGlobalIndex(); k <= rowMap->getMaxGlobalIndex(); ++k) {
+        const GlobalOrdinal i = k % nx;
+        const GlobalOrdinal j = k / nx;
 
-    const size_t maxNumEntriesPerRow = 5;
-    auto A = Teuchos::rcp(new TpetraCrsMatrix(rowMap, maxNumEntriesPerRow));
-
-    const double hx = 1.0 / static_cast<double>(nx - 1);
-    const double hy = 1.0 / static_cast<double>(ny - 1);
-    const double h_sq_inv = 1.0 / (hx * hy);
-
-    for (GlobalOrdinal globalRow = globalRowMin; globalRow <= globalRowMax; ++globalRow) {
-        const GlobalOrdinal i = globalRow % nx;
-        const GlobalOrdinal j = globalRow / nx;
-
-        Teuchos::Array<GlobalOrdinal> colIndices;
-        Teuchos::Array<Scalar> values;
+        Teuchos::Array<GlobalOrdinal> cols;
+        Teuchos::Array<Scalar> vals;
 
         if (i == 0 || i == nx - 1 || j == 0 || j == ny - 1) {
-            colIndices.push_back(globalRow);
-            values.push_back(1.0);
-            A->insertGlobalValues(globalRow, colIndices(), values());
+            cols.push_back(k); vals.push_back(1.0);
+            A->insertGlobalValues(k, cols(), vals());
             continue;
         }
 
-        Scalar n_curr  = n_view(globalRow, 0);
-        Scalar n_east  = 0.0, n_west = 0.0, n_north = 0.0, n_south = 0.0;
+        const Scalar nc = n_view(k, 0);
+        const Scalar nE = (i < nx-1) ? (nc + n_view(k+1,  0)) / 2.0 : 0.0;
+        const Scalar nW = (i > 0)    ? (nc + n_view(k-1,  0)) / 2.0 : 0.0;
+        const Scalar nN = (j < ny-1) ? (nc + n_view(k+nx, 0)) / 2.0 : 0.0;
+        const Scalar nS = (j > 0)    ? (nc + n_view(k-nx, 0)) / 2.0 : 0.0;
 
-        if (i < nx - 1) n_east  = (n_curr + n_view(globalRow + 1,  0)) / 2.0;
-        if (i > 0)      n_west  = (n_curr + n_view(globalRow - 1,  0)) / 2.0;
-        if (j < ny - 1) n_north = (n_curr + n_view(globalRow + nx, 0)) / 2.0;
-        if (j > 0)      n_south = (n_curr + n_view(globalRow - nx, 0)) / 2.0;
+        if (i < nx-1) { cols.push_back(k+1);  vals.push_back(-nE * h_sq_inv); }
+        if (i > 0)    { cols.push_back(k-1);  vals.push_back(-nW * h_sq_inv); }
+        if (j < ny-1) { cols.push_back(k+nx); vals.push_back(-nN * h_sq_inv); }
+        if (j > 0)    { cols.push_back(k-nx); vals.push_back(-nS * h_sq_inv); }
+        cols.push_back(k); vals.push_back((nE + nW + nN + nS) * h_sq_inv);
 
-        Scalar diag_coeff = 0.0;
-        if (i < nx - 1) { colIndices.push_back(globalRow + 1);  values.push_back(-n_east  * h_sq_inv); diag_coeff += n_east;  }
-        if (i > 0)      { colIndices.push_back(globalRow - 1);  values.push_back(-n_west  * h_sq_inv); diag_coeff += n_west;  }
-        if (j < ny - 1) { colIndices.push_back(globalRow + nx); values.push_back(-n_north * h_sq_inv); diag_coeff += n_north; }
-        if (j > 0)      { colIndices.push_back(globalRow - nx); values.push_back(-n_south * h_sq_inv); diag_coeff += n_south; }
-        colIndices.push_back(globalRow);
-        values.push_back(diag_coeff * h_sq_inv);
-
-        A->insertGlobalValues(globalRow, colIndices(), values());
+        A->insertGlobalValues(k, cols(), vals());
     }
 
-    Teuchos::RCP<Teuchos::ParameterList> params = Teuchos::rcp(new Teuchos::ParameterList());
-    params->set("Optimize Storage", true);
-    A->fillComplete(rowMap, rowMap, params);
-
+    Teuchos::RCP<Teuchos::ParameterList> p = Teuchos::rcp(new Teuchos::ParameterList());
+    p->set("Optimize Storage", true);
+    A->fillComplete(rowMap, rowMap, p);
     return A;
 }
