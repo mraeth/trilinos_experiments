@@ -23,17 +23,10 @@ void initializeDistributed(
     const LocalOrdinal numLocalEntries = rowMap->getLocalNumElements();
     auto b_view = b->getLocalViewDevice(Tpetra::Access::OverwriteAll);
 
-    auto gids_dev = rowMap->getMyGlobalIndicesDevice();
-
     Kokkos::parallel_for("InitializeVector", Kokkos::RangePolicy<ExecutionSpace>(0, numLocalEntries),
         KOKKOS_LAMBDA(const LocalOrdinal local_k) {
-            const GlobalOrdinal global_k = gids_dev(local_k);
-            const GlobalOrdinal i = global_k % nx;
-            const GlobalOrdinal j = global_k / nx;
-
-            const double x = static_cast<double>(i) / static_cast<double>(nx - 1);
-            const double y = static_cast<double>(j) / static_cast<double>(ny - 1);
-
+            const double x = static_cast<double>(local_k % nx) / static_cast<double>(nx - 1);
+            const double y = static_cast<double>(local_k / nx) / static_cast<double>(ny - 1);
             b_view(local_k, 0) = calculate_func(x, y);
         });
 }
@@ -41,42 +34,25 @@ void initializeDistributed(
 template <typename Scalar, typename LocalOrdinal, typename GlobalOrdinal, typename Node>
 void print2File(const std::string &label,
                 const Tpetra::Vector<Scalar, LocalOrdinal, GlobalOrdinal, Node> &vec,
-                const Teuchos::Comm<int> &comm,
                 GlobalOrdinal nx, GlobalOrdinal ny)
 {
-    using map_type = Tpetra::Map<LocalOrdinal, GlobalOrdinal, Node>;
-    const auto map = vec.getMap();
-
-    const int myRank = comm.getRank();
-
-    std::ostringstream filename;
-    filename << label << "_" << myRank << ".out";
-    std::ofstream outFile(filename.str());
+    std::ofstream outFile(label + ".out");
 
     if (!outFile.is_open()) {
-        std::cerr << "Rank " << myRank << ": Failed to open file " << filename.str() << std::endl;
+        std::cerr << "Failed to open file " << label << ".out" << std::endl;
         return;
     }
-    
 
     outFile << std::fixed << std::setprecision(12);
 
     auto localView = vec.getLocalViewHost(Tpetra::Access::ReadOnly);
     auto data1d = Kokkos::subview(localView, Kokkos::ALL(), 0);
 
-    const LocalOrdinal numLocal = map->getLocalNumElements();
+    const LocalOrdinal numLocal = vec.getMap()->getLocalNumElements();
 
-    for (LocalOrdinal local_k = 0; local_k < numLocal; ++local_k) {
-        GlobalOrdinal global_k = map->getGlobalElement(local_k);
-
-        GlobalOrdinal i = global_k % nx;
-        GlobalOrdinal j = global_k / nx;
-
-        Scalar value = data1d(local_k);
-        outFile << "(" << i << ", " << j << ", " << value << ")\n";
+    for (LocalOrdinal k = 0; k < numLocal; ++k) {
+        outFile << "(" << k % nx << ", " << k / nx << ", " << data1d(k) << ")\n";
     }
-
-    outFile.close();
 }
 
 
@@ -144,7 +120,7 @@ for (int level = 0; level < maxLevels - 1; ++level) {
         ret = solver->solve();
     }
     Teuchos::TimeMonitor::summarize(std::cout);
-    if (ret != Belos::Converged && A->getDomainMap()->getComm()->getRank() == 0)
+    if (ret != Belos::Converged)
         std::cerr << "Warning: solver did not converge." << std::endl;
     return x;
 }
@@ -193,7 +169,7 @@ int main(int argc, char *argv[]) {
             }else{
                 initializeDistributed(map, n, nx, ny, NAnalyticalFunctor{});
             }
-            print2File("n", *n, *comm, nx, ny);
+            print2File("n", *n, nx, ny);
             initializeDistributed(map, b, nx, ny, RhoFunctor{});
             A = createGeneralizedPoissonMatrix(b->getMap(), n, nx, ny);
         } else {
@@ -202,21 +178,19 @@ int main(int argc, char *argv[]) {
         }
 
         if (!test_analytical) {
-            print2File("phi0", *phi, *comm, nx, ny);
+            print2File("phi0", *phi, nx, ny);
             A->apply(*phi, *b);
         }
-        print2File("rhs", *b, *comm, nx, ny);
+        print2File("rhs", *b, nx, ny);
         auto start = std::chrono::high_resolution_clock::now();
 
         phi = solve(A, b, solverType); 
 
         auto end = std::chrono::high_resolution_clock::now();
         std::chrono::duration<double> elapsed = end - start;
-        if (comm->getRank() == 0) {
-            std::cout << "Solve time: " << elapsed.count() << " seconds" << std::endl;
-        }
+        std::cout << "Solve time: " << elapsed.count() << " seconds" << std::endl;
 
-        print2File("phi", *phi, *comm, nx, ny);
+        print2File("phi", *phi, nx, ny);
     }
 
     return 0;

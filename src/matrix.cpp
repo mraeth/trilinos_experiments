@@ -1,5 +1,4 @@
 #include "matrix.hpp"
-#include <set>
 
 /// @brief Assemble the standard 2D Poisson matrix.
 ///
@@ -129,34 +128,7 @@ RCP<TpetraCrsMatrix> createGeneralizedPoissonMatrix(
     const GlobalOrdinal globalRowMin = rowMap->getMinGlobalIndex();
     const GlobalOrdinal globalRowMax = rowMap->getMaxGlobalIndex();
 
-    // Build an overlapping map: locally owned rows + ghost neighbors needed for
-    // the stencil. Without this, accessing n-values of off-rank neighbors via
-    // getLocalElement() would return invalid indices and cause buffer overreads.
-    Teuchos::Array<GlobalOrdinal> overlapGIDs;
-    std::set<GlobalOrdinal> ghostSet;
-    for (GlobalOrdinal globalRow = globalRowMin; globalRow <= globalRowMax; ++globalRow) {
-        overlapGIDs.push_back(globalRow);
-        const GlobalOrdinal i = globalRow % nx;
-        const GlobalOrdinal j = globalRow / nx;
-        if (i == 0 || i == nx - 1 || j == 0 || j == ny - 1) continue;
-        auto addGhost = [&](GlobalOrdinal gid) {
-            if (gid < globalRowMin || gid > globalRowMax) ghostSet.insert(gid);
-        };
-        if (i < nx - 1) addGhost(globalRow + 1);
-        if (i > 0)      addGhost(globalRow - 1);
-        if (j < ny - 1) addGhost(globalRow + nx);
-        if (j > 0)      addGhost(globalRow - nx);
-    }
-    for (GlobalOrdinal g : ghostSet) overlapGIDs.push_back(g);
-
-    auto overlapMap = Teuchos::rcp(new Tpetra::Map<LocalOrdinal, GlobalOrdinal, Node>(
-        Teuchos::OrdinalTraits<Tpetra::global_size_t>::invalid(),
-        overlapGIDs(), 0, rowMap->getComm()));
-
-    TpetraVector n_overlap(overlapMap);
-    TpetraImporter importer(rowMap, overlapMap);
-    n_overlap.doImport(*n, importer, Tpetra::INSERT);
-    auto n_view = n_overlap.getLocalViewHost(Tpetra::Access::ReadOnly);
+    auto n_view = n->getLocalViewHost(Tpetra::Access::ReadOnly);
 
     const size_t maxNumEntriesPerRow = 5;
     auto A = Teuchos::rcp(new TpetraCrsMatrix(rowMap, maxNumEntriesPerRow));
@@ -179,13 +151,13 @@ RCP<TpetraCrsMatrix> createGeneralizedPoissonMatrix(
             continue;
         }
 
-        Scalar n_curr  = n_view(overlapMap->getLocalElement(globalRow), 0);
+        Scalar n_curr  = n_view(globalRow, 0);
         Scalar n_east  = 0.0, n_west = 0.0, n_north = 0.0, n_south = 0.0;
 
-        if (i < nx - 1) n_east  = (n_curr + n_view(overlapMap->getLocalElement(globalRow + 1),  0)) / 2.0;
-        if (i > 0)      n_west  = (n_curr + n_view(overlapMap->getLocalElement(globalRow - 1),  0)) / 2.0;
-        if (j < ny - 1) n_north = (n_curr + n_view(overlapMap->getLocalElement(globalRow + nx), 0)) / 2.0;
-        if (j > 0)      n_south = (n_curr + n_view(overlapMap->getLocalElement(globalRow - nx), 0)) / 2.0;
+        if (i < nx - 1) n_east  = (n_curr + n_view(globalRow + 1,  0)) / 2.0;
+        if (i > 0)      n_west  = (n_curr + n_view(globalRow - 1,  0)) / 2.0;
+        if (j < ny - 1) n_north = (n_curr + n_view(globalRow + nx, 0)) / 2.0;
+        if (j > 0)      n_south = (n_curr + n_view(globalRow - nx, 0)) / 2.0;
 
         Scalar diag_coeff = 0.0;
         if (i < nx - 1) { colIndices.push_back(globalRow + 1);  values.push_back(-n_east  * h_sq_inv); diag_coeff += n_east;  }
