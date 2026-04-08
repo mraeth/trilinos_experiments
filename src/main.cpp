@@ -14,8 +14,8 @@ concept GridFunctor = requires(F f, double x, double y) {
 };
 
 template <GridFunctor CalculateFunc>
-ScalarView2D initializeView(int nx, int ny, CalculateFunc calculate_func) {
-    ScalarView2D v("v", nx, ny);
+ScalarView2D initializeView(const std::string& label, int nx, int ny, CalculateFunc calculate_func) {
+    ScalarView2D v(label, nx, ny);
     Kokkos::parallel_for("Initialize", Kokkos::RangePolicy<ExecutionSpace>(0, nx * ny),
         KOKKOS_LAMBDA(int k) {
             const int i = k % nx;
@@ -27,7 +27,7 @@ ScalarView2D initializeView(int nx, int ny, CalculateFunc calculate_func) {
     return v;
 }
 
-void print2File(const std::string& label, const ScalarView2D& v, int nx, int ny) {
+void print2File(const std::string& label, const ScalarView2D& v) {
     auto v_host = Kokkos::create_mirror_view_and_copy(Kokkos::HostSpace(), v);
 
     std::ofstream outFile(label + ".out");
@@ -36,8 +36,8 @@ void print2File(const std::string& label, const ScalarView2D& v, int nx, int ny)
         return;
     }
     outFile << std::fixed << std::setprecision(12);
-    for (int j = 0; j < ny; ++j)
-        for (int i = 0; i < nx; ++i)
+    for (int j = 0; j < v_host.extent_int(1); ++j)
+        for (int i = 0; i < v_host.extent_int(0); ++i)
             outFile << "(" << i << ", " << j << ", " << v_host(i, j) << ")\n";
 }
 
@@ -62,26 +62,26 @@ int main(int argc, char *argv[]) {
 
     PoissonSolver solver(nx, ny);
 
-    ScalarView2D phi = initializeView(nx, ny, PhiFunctor{});
+    ScalarView2D phi = initializeView("phi", nx, ny, PhiFunctor{});
     ScalarView2D rhs("rhs", nx, ny);
 
     PoissonMatrix A;
     if (generalized) {
-        ScalarView2D n = test_analytical ? initializeView(nx, ny, NAnalyticalFunctor{})
-                                         : initializeView(nx, ny, NFunctor{});
-        print2File("n", n, nx, ny);
-        rhs = initializeView(nx, ny, RhoFunctor{});
+        ScalarView2D n = test_analytical ? initializeView("n", nx, ny, NAnalyticalFunctor{})
+                                         : initializeView("n", nx, ny, NFunctor{});
+        print2File("n", n);
+        rhs = initializeView("rhs", nx, ny, RhoFunctor{});
         A   = solver.buildGeneralizedMatrix(n);
     } else {
-        rhs = initializeView(nx, ny, RhoConstFunctor{});
+        rhs = initializeView("rhs", nx, ny, RhoConstFunctor{});
         A   = solver.buildMatrix();
     }
 
     if (!test_analytical) {
-        print2File("phi0", phi, nx, ny);
+        print2File("phi0", phi);
         solver.apply(A, phi, rhs);
     }
-    print2File("rhs", rhs, nx, ny);
+    print2File("rhs", rhs);
 
     ScalarView2D x("x", nx, ny);
     auto start = std::chrono::high_resolution_clock::now();
@@ -93,7 +93,7 @@ int main(int argc, char *argv[]) {
               << std::chrono::duration<double>(end - start).count()
               << " seconds" << std::endl;
 
-    print2File("phi", x, nx, ny);
+    print2File("phi", x);
 
     return 0;
 }

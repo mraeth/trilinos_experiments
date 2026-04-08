@@ -11,20 +11,20 @@ struct PoissonSolver::Impl {
     int nx, ny;
 };
 
-static RCP<const TpetraMapBase> makeSerialMap(int nx, int ny)
+RCP<const TpetraMapBase> makeSerialMap(int nx, int ny)
 {
     const Tpetra::global_size_t n = static_cast<Tpetra::global_size_t>(nx) * ny;
     return rcp(new TpetraMapBase(n, 0, Teuchos::DefaultComm<int>::getComm()));
 }
 
-static RCP<TpetraOperator> buildPreconditioner(RCP<TpetraCrsMatrix> A)
+RCP<TpetraOperator> buildPreconditioner(RCP<TpetraCrsMatrix> A)
 {
     RCP<Teuchos::ParameterList> p = rcp(new Teuchos::ParameterList());
     p->set("verbosity", "low");
     p->set("coarse: max size", 32);
     p->set("cycle type", "V");
     p->set("max levels", 10);
-    p->set("coarse: type", "Amesos2");
+    p->set("coarse: type", "Klu");
 
     for (int level = 0; level < 9; ++level) {
         Teuchos::ParameterList& lp = p->sublist("level " + std::to_string(level));
@@ -39,37 +39,20 @@ static RCP<TpetraOperator> buildPreconditioner(RCP<TpetraCrsMatrix> A)
     return MueLu::CreateTpetraPreconditioner<Scalar, LocalOrdinal, GlobalOrdinal, Node>(A, *p);
 }
 
-static RCP<TpetraVector> wrapView(const RCP<const TpetraMapBase>& map, const ScalarView2D& v)
+RCP<TpetraVector> wrapView(const RCP<const TpetraMapBase>& map, const ScalarView2D& v)
 {
     using dev_view_2d = TpetraMultiVector::dual_view_type::t_dev;
     TpetraMultiVector mv(map, dev_view_2d(const_cast<double*>(v.data()), v.size(), 1));
     return rcp(new TpetraVector(mv, 0));
 }
 
-static void runBelos(RCP<TpetraCrsMatrix> A, RCP<TpetraOperator> prec,
-                     RCP<TpetraVector> b, RCP<TpetraVector> x,
-                     const std::string& solverType)
+RCP<TpetraVector> wrapViewMut(const RCP<const TpetraMapBase>& map, ScalarView2D& v)
 {
-    RCP<BelosLinearProblem> problem = rcp(new BelosLinearProblem());
-    problem->setOperator(A);
-    problem->setLHS(x);
-    problem->setRHS(b);
-    problem->setLeftPrec(prec);
-    problem->setProblem();
-
-    RCP<Teuchos::ParameterList> p = rcp(new Teuchos::ParameterList());
-    p->set("Convergence Tolerance", 1e-12);
-    p->set("Maximum Iterations", 500);
-    p->set("Verbosity", Belos::Errors | Belos::Warnings | Belos::StatusTestDetails);
-    p->set("Output Frequency", 1);
-
-    Belos::SolverFactory<Scalar, TpetraMultiVector, TpetraOperator> factory;
-    RCP<BelosSolverManager> solver = factory.create(solverType, p);
-    solver->setProblem(problem);
-
-    if (solver->solve() != Belos::Converged)
-        std::cerr << "Warning: PoissonSolver did not converge." << std::endl;
+    using dev_view_2d = TpetraMultiVector::dual_view_type::t_dev;
+    TpetraMultiVector mv(map, dev_view_2d(v.data(), v.size(), 1));
+    return rcp(new TpetraVector(mv, 0));
 }
+
 
 PoissonSolver::ScopeGuard::ScopeGuard(int& argc, char**& argv) { Tpetra::initialize(&argc, &argv); }
 PoissonSolver::ScopeGuard::~ScopeGuard()                       { Tpetra::finalize(); }
@@ -107,14 +90,41 @@ PoissonMatrix PoissonSolver::buildGeneralizedMatrix(const ScalarView2D& n)
 
 void PoissonSolver::apply(const PoissonMatrix& mat, const ScalarView2D& x, ScalarView2D& y)
 {
-    mat.impl_->A->apply(*wrapView(impl_->map, x), *wrapView(impl_->map, y));
+    mat.impl_->A->apply(*wrapView(impl_->map, x), *wrapViewMut(impl_->map, y));
 }
 
 void PoissonSolver::solve(const PoissonMatrix& mat, const ScalarView2D& rhs, ScalarView2D& x,
                           std::string solverType)
 {
-    runBelos(mat.impl_->A, mat.impl_->prec,
-             wrapView(impl_->map, rhs), wrapView(impl_->map, x), solverType);
+    auto b_tp = wrapView(impl_->map, rhs);
+    auto x_tp = wrapViewMut(impl_->map, x);
+
+    RCP<BelosLinearProblem> problem = rcp(new BelosLinearProblem());
+    problem->setOperator(mat.impl_->A);
+    problem->setLHS(x_tp);
+    problem->setRHS(b_tp);
+    problem->setLeftPrec(mat.impl_->prec);
+    problem->setProblem();
+
+    RCP<Teuchos::ParameterList> p = rcp(new Teuchos::ParameterList());
+    p->set("Convergence Tolerance", 1e-12);
+    p->set("Maximum Iterations", 500);
+    p->set("Verbosity", Belos::Errors | Belos::Warnings | Belos::StatusTestDetails);
+    p->set("Output Frequency", 1);
+
+    Belos::SolverFactory<Scalar, TpetraMultiVector, TpetraOperator> factory;
+    RCP<BelosSolverManager> solver = factory.create(solverType, p);
+    solver->setProblem(problem);
+
+    if (solver->solve() != Belos::Converged)
+        std::cerr << "Warning: PoissonSolver did not converge." << std::endl;
+}
+
+void insertBoundaryRow(RCP<TpetraCrsMatrix>& A, GlobalOrdinal k)
+{
+    Teuchos::Array<GlobalOrdinal> cols(1, k);
+    Teuchos::Array<Scalar>        vals(1, 1.0);
+    A->insertGlobalValues(k, cols(), vals());
 }
 
 RCP<TpetraCrsMatrix> createPoissonMatrix(
@@ -122,7 +132,7 @@ RCP<TpetraCrsMatrix> createPoissonMatrix(
 {
     auto A = Teuchos::rcp(new TpetraCrsMatrix(rowMap, 5));
 
-    const double h_sq_inv = static_cast<double>(nx - 1) * static_cast<double>(ny - 1);
+    const double stencil_scale = static_cast<double>(nx - 1) * static_cast<double>(ny - 1);
 
     for (GlobalOrdinal k = rowMap->getMinGlobalIndex(); k <= rowMap->getMaxGlobalIndex(); ++k) {
         const GlobalOrdinal i = k % nx;
@@ -132,14 +142,15 @@ RCP<TpetraCrsMatrix> createPoissonMatrix(
         Teuchos::Array<Scalar> vals;
 
         if (i == 0 || i == nx - 1 || j == 0 || j == ny - 1) {
-            cols.push_back(k); vals.push_back(1.0);
-        } else {
-            cols.push_back(k);      vals.push_back( 4.0 * h_sq_inv);
-            cols.push_back(k - 1);  vals.push_back(-1.0 * h_sq_inv);
-            cols.push_back(k + 1);  vals.push_back(-1.0 * h_sq_inv);
-            cols.push_back(k - nx); vals.push_back(-1.0 * h_sq_inv);
-            cols.push_back(k + nx); vals.push_back(-1.0 * h_sq_inv);
+            insertBoundaryRow(A, k);
+            continue;
         }
+
+        cols.push_back(k);      vals.push_back( 4.0 * stencil_scale);
+        cols.push_back(k - 1);  vals.push_back(-1.0 * stencil_scale);
+        cols.push_back(k + 1);  vals.push_back(-1.0 * stencil_scale);
+        cols.push_back(k - nx); vals.push_back(-1.0 * stencil_scale);
+        cols.push_back(k + nx); vals.push_back(-1.0 * stencil_scale);
         A->insertGlobalValues(k, cols(), vals());
     }
 
@@ -155,7 +166,7 @@ RCP<TpetraCrsMatrix> createGeneralizedPoissonMatrix(
 {
     auto n_view   = n->getLocalViewHost(Tpetra::Access::ReadOnly);
     auto A        = Teuchos::rcp(new TpetraCrsMatrix(rowMap, 5));
-    const double h_sq_inv = static_cast<double>(nx - 1) * static_cast<double>(ny - 1);
+    const double stencil_scale = static_cast<double>(nx - 1) * static_cast<double>(ny - 1);
 
     for (GlobalOrdinal k = rowMap->getMinGlobalIndex(); k <= rowMap->getMaxGlobalIndex(); ++k) {
         const GlobalOrdinal i = k % nx;
@@ -165,8 +176,7 @@ RCP<TpetraCrsMatrix> createGeneralizedPoissonMatrix(
         Teuchos::Array<Scalar> vals;
 
         if (i == 0 || i == nx - 1 || j == 0 || j == ny - 1) {
-            cols.push_back(k); vals.push_back(1.0);
-            A->insertGlobalValues(k, cols(), vals());
+            insertBoundaryRow(A, k);
             continue;
         }
 
@@ -176,11 +186,11 @@ RCP<TpetraCrsMatrix> createGeneralizedPoissonMatrix(
         const Scalar nN = (j < ny-1) ? (nc + n_view(k+nx, 0)) / 2.0 : 0.0;
         const Scalar nS = (j > 0)    ? (nc + n_view(k-nx, 0)) / 2.0 : 0.0;
 
-        if (i < nx-1) { cols.push_back(k+1);  vals.push_back(-nE * h_sq_inv); }
-        if (i > 0)    { cols.push_back(k-1);  vals.push_back(-nW * h_sq_inv); }
-        if (j < ny-1) { cols.push_back(k+nx); vals.push_back(-nN * h_sq_inv); }
-        if (j > 0)    { cols.push_back(k-nx); vals.push_back(-nS * h_sq_inv); }
-        cols.push_back(k); vals.push_back((nE + nW + nN + nS) * h_sq_inv);
+        if (i < nx-1) { cols.push_back(k+1);  vals.push_back(-nE * stencil_scale); }
+        if (i > 0)    { cols.push_back(k-1);  vals.push_back(-nW * stencil_scale); }
+        if (j < ny-1) { cols.push_back(k+nx); vals.push_back(-nN * stencil_scale); }
+        if (j > 0)    { cols.push_back(k-nx); vals.push_back(-nS * stencil_scale); }
+        cols.push_back(k); vals.push_back((nE + nW + nN + nS) * stencil_scale);
 
         A->insertGlobalValues(k, cols(), vals());
     }
