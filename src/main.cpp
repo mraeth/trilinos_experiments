@@ -47,22 +47,23 @@ int main(int argc, char *argv[]) {
     std::cout << "Kokkos execution space: " << typeid(Kokkos::DefaultExecutionSpace).name() << std::endl;
 
     bool generalized     = false;
+    bool higher_order    = false;
     bool test_analytical = false;
     int nx = 10, ny = 10;
     std::string solverType = "GMRES";
 
     for (int i = 1; i < argc; ++i) {
         std::string arg = argv[i];
-        if      (arg.rfind("--nx=", 0) == 0)      nx         = std::stoi(arg.substr(5));
-        else if (arg.rfind("--ny=", 0) == 0)      ny         = std::stoi(arg.substr(5));
-        else if (arg.rfind("--solver=", 0) == 0)  solverType = arg.substr(9);
-        else if (arg == "--generalized")           generalized    = true;
+        if      (arg.rfind("--nx=", 0) == 0)      nx           = std::stoi(arg.substr(5));
+        else if (arg.rfind("--ny=", 0) == 0)      ny           = std::stoi(arg.substr(5));
+        else if (arg.rfind("--solver=", 0) == 0)  solverType   = arg.substr(9);
+        else if (arg == "--generalized")           generalized  = true;
+        else if (arg == "--higher_order")          higher_order = true;
         else if (arg == "--test_analytical")       test_analytical = true;
     }
 
     PoissonSolver solver(nx, ny);
 
-    ScalarView2D phi = initializeView("phi", nx, ny, PhiFunctor{});
     ScalarView2D rhs("rhs", nx, ny);
 
     PoissonMatrix A;
@@ -71,15 +72,20 @@ int main(int argc, char *argv[]) {
                                          : initializeView("n", nx, ny, NFunctor{});
         print2File("n", n);
         rhs = initializeView("rhs", nx, ny, RhoFunctor{});
-        A   = solver.buildGeneralizedMatrix(n);
+        A   = higher_order ? solver.buildHigherOrderGeneralizedMatrix(n)
+                           : solver.buildGeneralizedMatrix(n);
     } else {
         rhs = initializeView("rhs", nx, ny, RhoConstFunctor{});
         A   = solver.buildMatrix();
     }
 
     if (!test_analytical) {
+        ScalarView2D phi = initializeView("phi", nx, ny, PhiFunctor{});
         print2File("phi0", phi);
         solver.apply(A, phi, rhs);
+    }else {
+        ScalarView2D phi = initializeView("phi0", nx, ny, PhiAnalyticalFunctor{});
+        print2File("phi0", phi);
     }
     print2File("rhs", rhs);
 

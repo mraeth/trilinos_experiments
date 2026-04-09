@@ -96,7 +96,7 @@ double turbulence_noise(double x, double y, int N, int seed) {
         }
     }
 
-    return value * Kokkos::sin(PI * x) * Kokkos::sin(PI * y);
+    return value * Kokkos::sin(PI * x) * Kokkos::sin(PI * y)*Kokkos::sin(PI * x) * Kokkos::sin(PI * y);
 }
 
 // --- Exponential Density ---
@@ -111,7 +111,7 @@ double exp_dens(double x, double y) {
 struct PhiFunctor {
     KOKKOS_INLINE_FUNCTION
     double operator()(double x, double y) const {
-        return turbulence_noise(x, y, 32, 1);
+        return turbulence_noise(x, y, 128, 1);
     }
 };
 
@@ -151,5 +151,14 @@ struct RhoConstFunctor {
     double operator()(double x, double y) const {
         constexpr double PI = Kokkos::numbers::pi;
         return -2.0 * PI * PI * Kokkos::sin(PI * x) * Kokkos::sin(PI * y);
+    }
+};
+
+
+struct PhiAnalyticalFunctor {
+    KOKKOS_INLINE_FUNCTION
+    double operator()(double x, double y) const {
+        constexpr double PI = Kokkos::numbers::pi;
+        return -1.0*Kokkos::sin(PI * x) * Kokkos::sin(PI * y);
     }
 };

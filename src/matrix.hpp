@@ -42,6 +42,10 @@ public:
     // Generalized Poisson: -∇·(n ∇φ) = rhs
     PoissonMatrix buildGeneralizedMatrix(const ScalarView2D& n);
 
+    // Higher-order (4th-order interior) generalized Poisson: -∇·(n ∇φ) = rhs
+    // Uses 4th-order flux discretization in the interior, 2nd-order near boundaries.
+    PoissonMatrix buildHigherOrderGeneralizedMatrix(const ScalarView2D& n);
+
     void apply(const PoissonMatrix& mat, const ScalarView2D& x, ScalarView2D& y);
 
     void solve(const PoissonMatrix& mat, const ScalarView2D& rhs, ScalarView2D& x,

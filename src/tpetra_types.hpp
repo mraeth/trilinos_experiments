@@ -47,3 +47,8 @@ RCP<TpetraCrsMatrix> createGeneralizedPoissonMatrix(
     Teuchos::RCP<const Tpetra::Map<LocalOrdinal, GlobalOrdinal>> rowMap,
     RCP<TpetraVector> n,
     int nx, int ny);
+
+RCP<TpetraCrsMatrix> createHigherOrderGeneralizedPoissonMatrix(
+    Teuchos::RCP<const Tpetra::Map<LocalOrdinal, GlobalOrdinal>> rowMap,
+    RCP<TpetraVector> n,
+    int nx, int ny);
