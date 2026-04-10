@@ -14,9 +14,10 @@ concept GridFunctor = requires(F f, double x, double y) {
 };
 
 template <GridFunctor CalculateFunc>
-ScalarView2D initializeView(const std::string& label, int nx, int ny, CalculateFunc calculate_func) {
-    ScalarView2D v(label, nx, ny);
-    Kokkos::parallel_for("Initialize", Kokkos::RangePolicy<ExecutionSpace>(0, nx * ny),
+Kokkos::View<double**>
+initializeView(const std::string& label, int nx, int ny, CalculateFunc calculate_func) {
+    Kokkos::View<double**> v(label, nx, ny);
+    Kokkos::parallel_for("Initialize", Kokkos::RangePolicy<Kokkos::DefaultExecutionSpace>(0, nx * ny),
         KOKKOS_LAMBDA(int k) {
             const int i = k % nx;
             const int j = k / nx;
@@ -27,7 +28,7 @@ ScalarView2D initializeView(const std::string& label, int nx, int ny, CalculateF
     return v;
 }
 
-void print2File(const std::string& label, const ScalarView2D& v) {
+void print2File(const std::string& label, const Kokkos::View<double**>& v) {
     auto v_host = Kokkos::create_mirror_view_and_copy(Kokkos::HostSpace(), v);
 
     std::ofstream outFile(label + ".out");
@@ -47,7 +48,6 @@ int main(int argc, char *argv[]) {
     std::cout << "Kokkos execution space: " << typeid(Kokkos::DefaultExecutionSpace).name() << std::endl;
 
     bool generalized     = false;
-    bool higher_order    = false;
     bool test_analytical = false;
     int nx = 10, ny = 10;
     std::string solverType = "GMRES";
@@ -58,38 +58,36 @@ int main(int argc, char *argv[]) {
         else if (arg.rfind("--ny=", 0) == 0)      ny           = std::stoi(arg.substr(5));
         else if (arg.rfind("--solver=", 0) == 0)  solverType   = arg.substr(9);
         else if (arg == "--generalized")           generalized  = true;
-        else if (arg == "--higher_order")          higher_order = true;
         else if (arg == "--test_analytical")       test_analytical = true;
     }
 
     PoissonSolver solver(nx, ny);
 
-    ScalarView2D rhs("rhs", nx, ny);
+    Kokkos::View<double**> rhs("rhs", nx, ny);
 
     PoissonMatrix A;
     if (generalized) {
-        ScalarView2D n = test_analytical ? initializeView("n", nx, ny, NAnalyticalFunctor{})
+        Kokkos::View<double**> n = test_analytical ? initializeView("n", nx, ny, NAnalyticalFunctor{})
                                          : initializeView("n", nx, ny, NFunctor{});
         print2File("n", n);
         rhs = initializeView("rhs", nx, ny, RhoFunctor{});
-        A   = higher_order ? solver.buildHigherOrderGeneralizedMatrix(n)
-                           : solver.buildGeneralizedMatrix(n);
+        A   = solver.buildGeneralizedMatrix(n);
     } else {
         rhs = initializeView("rhs", nx, ny, RhoConstFunctor{});
         A   = solver.buildMatrix();
     }
 
     if (!test_analytical) {
-        ScalarView2D phi = initializeView("phi", nx, ny, PhiFunctor{});
+        Kokkos::View<double**> phi = initializeView("phi", nx, ny, PhiFunctor{});
         print2File("phi0", phi);
         solver.apply(A, phi, rhs);
     }else {
-        ScalarView2D phi = initializeView("phi0", nx, ny, PhiAnalyticalFunctor{});
+        Kokkos::View<double**> phi = initializeView("phi0", nx, ny, PhiAnalyticalFunctor{});
         print2File("phi0", phi);
     }
     print2File("rhs", rhs);
 
-    ScalarView2D x("x", nx, ny);
+    Kokkos::View<double**> x("x", nx, ny);
     auto start = std::chrono::high_resolution_clock::now();
 
     solver.solve(A, rhs, x, solverType);

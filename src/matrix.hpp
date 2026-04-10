@@ -4,11 +4,6 @@
 #include <memory>
 #include <string>
 
-using ExecutionSpace = Kokkos::DefaultExecutionSpace;
-using ScalarView   = Kokkos::View<double*,  ExecutionSpace>;
-// 2D view: view(i,j) with LayoutLeft maps to flat index i + j*nx
-using ScalarView2D = Kokkos::View<double**, Kokkos::LayoutLeft, ExecutionSpace>;
-
 // Opaque handle to an assembled matrix + preconditioner.
 // Build via PoissonSolver::buildMatrix() / buildGeneralizedMatrix().
 // Pass to PoissonSolver::solve() — can be reused across multiple solves.
@@ -40,15 +35,16 @@ public:
     PoissonMatrix buildMatrix();
 
     // Generalized Poisson: -∇·(n ∇φ) = rhs
-    PoissonMatrix buildGeneralizedMatrix(const ScalarView2D& n);
+    PoissonMatrix buildGeneralizedMatrix(
+        const Kokkos::View<double**>& n);
 
-    // Higher-order (4th-order interior) generalized Poisson: -∇·(n ∇φ) = rhs
-    // Uses 4th-order flux discretization in the interior, 2nd-order near boundaries.
-    PoissonMatrix buildHigherOrderGeneralizedMatrix(const ScalarView2D& n);
+    void apply(const PoissonMatrix& mat,
+               const Kokkos::View<double**>& x,
+               Kokkos::View<double**>& y);
 
-    void apply(const PoissonMatrix& mat, const ScalarView2D& x, ScalarView2D& y);
-
-    void solve(const PoissonMatrix& mat, const ScalarView2D& rhs, ScalarView2D& x,
+    void solve(const PoissonMatrix& mat,
+               const Kokkos::View<double**>& rhs,
+               Kokkos::View<double**>& x,
                std::string solverType = "GMRES");
 
 private:
