@@ -1,5 +1,6 @@
 #include "matrix.hpp"
 #include "tpetra_types.hpp"
+#include "gmg.hpp"
 
 struct PoissonMatrix::Impl {
     RCP<TpetraCrsMatrix> A;
@@ -17,27 +18,6 @@ RCP<const TpetraMapBase> makeSerialMap(int nx, int ny)
     return rcp(new TpetraMapBase(n, 0, Teuchos::DefaultComm<int>::getComm()));
 }
 
-RCP<TpetraOperator> buildPreconditioner(RCP<TpetraCrsMatrix> A)
-{
-    RCP<Teuchos::ParameterList> p = rcp(new Teuchos::ParameterList());
-    p->set("verbosity", "low");
-    p->set("coarse: max size", 32);
-    p->set("cycle type", "V");
-    p->set("max levels", 10);
-    p->set("coarse: type", "Klu");
-
-    for (int level = 0; level < 9; ++level) {
-        Teuchos::ParameterList& lp = p->sublist("level " + std::to_string(level));
-        lp.set("smoother: type", "RELAXATION");
-        Teuchos::ParameterList sp;
-        sp.set("relaxation: type", "Jacobi");
-        sp.set("relaxation: damping factor", 0.8);
-        sp.set("relaxation: sweeps", 2);
-        lp.set("smoother: params", sp);
-    }
-
-    return MueLu::CreateTpetraPreconditioner<Scalar, LocalOrdinal, GlobalOrdinal, Node>(A, *p);
-}
 
 RCP<TpetraVector> wrapView(const RCP<const TpetraMapBase>& map, const ScalarView2D& v)
 {
@@ -76,7 +56,7 @@ PoissonMatrix PoissonSolver::buildMatrix()
 {
     PoissonMatrix m;
     m.impl_->A    = createPoissonMatrix(impl_->map, impl_->nx, impl_->ny);
-    m.impl_->prec = buildPreconditioner(m.impl_->A);
+    m.impl_->prec = rcp(new GeometricMGOperator(m.impl_->A, impl_->nx, impl_->ny));
     return m;
 }
 
@@ -84,7 +64,7 @@ PoissonMatrix PoissonSolver::buildGeneralizedMatrix(const ScalarView2D& n)
 {
     PoissonMatrix m;
     m.impl_->A    = createGeneralizedPoissonMatrix(impl_->map, wrapView(impl_->map, n), impl_->nx, impl_->ny);
-    m.impl_->prec = buildPreconditioner(m.impl_->A);
+    m.impl_->prec = rcp(new GeometricMGOperator(m.impl_->A, impl_->nx, impl_->ny));
     return m;
 }
 
@@ -92,7 +72,7 @@ PoissonMatrix PoissonSolver::buildHigherOrderGeneralizedMatrix(const ScalarView2
 {
     PoissonMatrix m;
     m.impl_->A    = createHigherOrderGeneralizedPoissonMatrix(impl_->map, wrapView(impl_->map, n), impl_->nx, impl_->ny);
-    m.impl_->prec = buildPreconditioner(m.impl_->A);
+    m.impl_->prec = rcp(new GeometricMGOperator(m.impl_->A, impl_->nx, impl_->ny));
     return m;
 }
 

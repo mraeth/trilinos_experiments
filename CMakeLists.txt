@@ -21,12 +21,13 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 find_package(MPI REQUIRED)
 
 # Trilinos
-find_package(Trilinos REQUIRED COMPONENTS Teuchos Tpetra MueLu)
+find_package(Trilinos REQUIRED COMPONENTS Teuchos Tpetra Belos)
 
 # === Poisson Target ===
 add_executable(Poisson
   src/main.cpp
   src/matrix.cpp
+  src/gmg.cpp
 )
 
 target_include_directories(Poisson PRIVATE

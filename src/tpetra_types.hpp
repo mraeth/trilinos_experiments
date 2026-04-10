@@ -13,9 +13,6 @@
 #include <BelosSolverFactory.hpp>
 #include <BelosTpetraAdapter.hpp>
 
-#include <MueLu.hpp>
-#include <MueLu_CreateTpetraPreconditioner.hpp>
-
 #include <Kokkos_Core.hpp>
 
 using Scalar        = Tpetra::Vector<>::scalar_type;
